@@ -36,19 +36,10 @@ jobs:
           export KBUILD_BUILD_USER=builder
           export KBUILD_BUILD_HOST=github-actions
 
-          echo "=== Daftar defconfig yang tersedia ==="
-          find arch/arm64/configs -maxdepth 3 -name "*defconfig*" | sort
+          DEFCONFIG="vendor/citrus-perf_defconfig"
+          echo "Menggunakan defconfig: $DEFCONFIG"
 
-          DEFCONFIG=$(find arch/arm64/configs -maxdepth 3 \( -name "*citrus*defconfig*" -o -name "*juice*defconfig*" -o -name "*bengal*defconfig*" \) | head -n 1)
-          echo "Terpilih: $DEFCONFIG"
-
-          if [ -z "$DEFCONFIG" ]; then
-            echo "Tidak ada defconfig citrus/juice/bengal yang cocok!"
-            exit 1
-          fi
-
-          DEFCONFIG_NAME=$(basename "$DEFCONFIG")
-          make O=out ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE "$DEFCONFIG_NAME"
+          make O=out ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE "$DEFCONFIG"
 
           ./scripts/config --file out/.config -d DEBUG_FS -d SCHED_DEBUG || true
           make O=out ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
