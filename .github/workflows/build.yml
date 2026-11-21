@@ -11,7 +11,11 @@ jobs:
       - name: Install dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y bc bison build-essential ccache curl flex git libelf-dev libssl-dev libxml2-dev python3 zip
+          sudo apt-get install -y \
+            bc bison build-essential ccache curl flex g++-aarch64-linux-gnu \
+            gcc-aarch64-linux-gnu git libelf-dev libffi-dev libgmp-dev \
+            libmpc-dev libmpfr-dev libssl-dev libxml2-dev make python3 \
+            unzip zip zstd clang lld llvm
 
       - name: Checkout kernel source
         uses: actions/checkout@v4
@@ -27,36 +31,46 @@ jobs:
         env:
           ARCH: arm64
           SUBARCH: arm64
-          DEFCONFIG: citrus-perf_defconfig
+          CROSS_COMPILE: aarch64-linux-gnu-
         run: |
           export KBUILD_BUILD_USER=builder
           export KBUILD_BUILD_HOST=github-actions
 
-          make O=out ARCH=$ARCH $DEFCONFIG
+          echo "=== Daftar defconfig yang tersedia ==="
+          find arch/arm64/configs -maxdepth 3 -name "*defconfig*" | sort
 
-          # Matikan beberapa opsi debug umum jika tersedia di Kconfig
-          ./scripts/config --file out/.config -d DEBUG_FS -d SCHED_DEBUG || true
-          make O=out ARCH=$ARCH olddefconfig
+          DEFCONFIG=$(find arch/arm64/configs -maxdepth 3 \( -name "*citrus*defconfig*" -o -name "*juice*defconfig*" -o -name "*bengal*defconfig*" \) | head -n 1)
+          echo "Terpilih: $DEFCONFIG"
 
-          make -j$(nproc) O=out ARCH=$ARCH
-
-      - name: Package AnyKernel3 zip
-        run: |
-          if [ -f "out/arch/arm64/boot/Image.gz-dtb" ]; then
-            cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
-          elif [ -f "out/arch/arm64/boot/Image.gz" ]; then
-            cp out/arch/arm64/boot/Image.gz AnyKernel3/
-          else
-            echo "Kernel image tidak ditemukan"
+          if [ -z "$DEFCONFIG" ]; then
+            echo "Tidak ada defconfig citrus/juice/bengal yang cocok!"
             exit 1
           fi
 
-          if [ -f "out/arch/arm64/boot/dtbo.img" ]; then
-            cp out/arch/arm64/boot/dtbo.img AnyKernel3/
+          DEFCONFIG_NAME=$(basename "$DEFCONFIG")
+          make O=out ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE "$DEFCONFIG_NAME"
+
+          ./scripts/config --file out/.config -d DEBUG_FS -d SCHED_DEBUG || true
+          make O=out ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
+
+          make -j$(nproc) O=out ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE
+
+      - name: Package AnyKernel3 zip
+        run: |
+          IMAGE=$(find out/arch/arm64/boot -name "Image.gz-dtb" -o -name "Image.gz" -o -name "Image" | head -n 1)
+          if [ -z "$IMAGE" ]; then
+            echo "Kernel Image tidak ditemukan!"
+            exit 1
+          fi
+
+          cp "$IMAGE" AnyKernel3/
+          DTBO=$(find out/arch/arm64/boot -name "dtbo.img" | head -n 1)
+          if [ -n "$DTBO" ]; then
+            cp "$DTBO" AnyKernel3/
           fi
 
           cd AnyKernel3
-          zip -r9 ../Fury-Citrus-JuiceIcedSnow_OSS.zip . -x '*.git*'
+          zip -r9 ../Fury-Citrus-JuiceIcedSnow_OSS.zip . -x ".git*"
 
       - name: Upload kernel zip artifact
         uses: actions/upload-artifact@v4
