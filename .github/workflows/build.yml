@@ -1,0 +1,66 @@
+name: Build Kernel Citrus (JuiceIcedSnow_OSS)
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential ccache curl flex git libelf-dev libssl-dev libxml2-dev python3 zip
+
+      - name: Checkout kernel source
+        uses: actions/checkout@v4
+        with:
+          ref: JuiceIcedSnow_OSS
+          fetch-depth: 1
+
+      - name: Clone AnyKernel3
+        run: |
+          git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
+
+      - name: Build kernel
+        env:
+          ARCH: arm64
+          SUBARCH: arm64
+          DEFCONFIG: citrus-perf_defconfig
+        run: |
+          export KBUILD_BUILD_USER=builder
+          export KBUILD_BUILD_HOST=github-actions
+
+          make O=out ARCH=$ARCH $DEFCONFIG
+
+          # Matikan beberapa opsi debug umum jika tersedia di Kconfig
+          ./scripts/config --file out/.config -d DEBUG_FS -d SCHED_DEBUG || true
+          make O=out ARCH=$ARCH olddefconfig
+
+          make -j$(nproc) O=out ARCH=$ARCH
+
+      - name: Package AnyKernel3 zip
+        run: |
+          if [ -f "out/arch/arm64/boot/Image.gz-dtb" ]; then
+            cp out/arch/arm64/boot/Image.gz-dtb AnyKernel3/
+          elif [ -f "out/arch/arm64/boot/Image.gz" ]; then
+            cp out/arch/arm64/boot/Image.gz AnyKernel3/
+          else
+            echo "Kernel image tidak ditemukan"
+            exit 1
+          fi
+
+          if [ -f "out/arch/arm64/boot/dtbo.img" ]; then
+            cp out/arch/arm64/boot/dtbo.img AnyKernel3/
+          fi
+
+          cd AnyKernel3
+          zip -r9 ../Fury-Citrus-JuiceIcedSnow_OSS.zip . -x '*.git*'
+
+      - name: Upload kernel zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Fury-Citrus-JuiceIcedSnow_OSS
+          path: Fury-Citrus-JuiceIcedSnow_OSS.zip
+          
