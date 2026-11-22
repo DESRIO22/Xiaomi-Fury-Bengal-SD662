@@ -6,14 +6,29 @@ on:
 jobs:
   build:
     runs-on: ubuntu-latest
+    timeout-minutes: 150
 
     steps:
+      - name: Free disk space + add swap
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL
+          sudo docker image prune --all --force || true
+          sudo swapoff -a || true
+          sudo fallocate -l 16G /mnt/swapfile
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          nproc
+          free -h
+          df -h /
+
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
             bc bison build-essential ccache clang curl flex lld llvm \
             gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            gcc-arm-linux-gnueabi binutils-arm-linux-gnueabi \
             git libelf-dev libffi-dev libgmp-dev libmpc-dev libmpfr-dev \
             libssl-dev libxml2-dev make python3 unzip zip zstd
 
@@ -27,28 +42,59 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
 
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: citrus-${{ github.ref_name }}
+          max-size: 2G
+
       - name: Build kernel with Clang
         env:
           ARCH: arm64
           SUBARCH: arm64
-          CC: clang
-          CLANG_TRIPLE: aarch64-linux-gnu-
-          CROSS_COMPILE: aarch64-linux-gnu-
-          LLVM: 1
-          LLVM_IAS: 1
           KBUILD_BUILD_USER: builder
           KBUILD_BUILD_HOST: github-actions
         run: |
-          set -e
+          set -eo pipefail
           DEFCONFIG="vendor/citrus-perf_defconfig"
           echo "Menggunakan defconfig: $DEFCONFIG"
 
-          make O=out ARCH=$ARCH CC=$CC CLANG_TRIPLE=$CLANG_TRIPLE CROSS_COMPILE=$CROSS_COMPILE LLVM=$LLVM "$DEFCONFIG"
+          # monitor RAM tiap 60 detik, biar kalau mati ketauan penyebabnya
+          ( while true; do date +%T; free -m | sed -n '1,3p'; sleep 60; done ) > mem.log 2>&1 &
 
-          ./scripts/config --file out/.config -d DEBUG_FS -d SCHED_DEBUG || true
-          make O=out ARCH=$ARCH CC=$CC CLANG_TRIPLE=$CLANG_TRIPLE CROSS_COMPILE=$CROSS_COMPILE LLVM=$LLVM olddefconfig
+          MAKE_ARGS=(
+            O=out
+            ARCH=arm64
+            CC="ccache clang"
+            LLVM=1
+            LLVM_IAS=1
+            CLANG_TRIPLE=aarch64-linux-gnu-
+            CROSS_COMPILE=aarch64-linux-gnu-
+            CROSS_COMPILE_ARM32=arm-linux-gnueabi-
+            KCFLAGS="-Wno-error"
+            LOCALVERSION=-snuzzle-citrus
+          )
 
-          make -j4 O=out ARCH=$ARCH CC=$CC CLANG_TRIPLE=$CLANG_TRIPLE CROSS_COMPILE=$CROSS_COMPILE LLVM=$LLVM LOCALVERSION="-snuzzle-citrus"
+          make "${MAKE_ARGS[@]}" "$DEFCONFIG"
+
+          # matiin LTO/CFI/SCS (makan RAM gede di runner) + debug
+          ./scripts/config --file out/.config \
+            -d LTO_CLANG -d THINLTO -d CFI_CLANG -d CFI_PERMISSIVE -d SHADOW_CALL_STACK \
+            -d DEBUG_FS -d SCHED_DEBUG || true
+          make "${MAKE_ARGS[@]}" olddefconfig
+
+          # -j rendah + nice biar runner agent ga kelaparan CPU/RAM
+          nice -n 10 make -j$(( $(nproc) + 1 )) "${MAKE_ARGS[@]}" 2>&1 | tee build.log
+
+      - name: Upload build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: build-logs
+          path: |
+            build.log
+            mem.log
+          if-no-files-found: ignore
 
       - name: Package AnyKernel3 zip
         run: |
