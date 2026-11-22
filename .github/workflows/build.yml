@@ -8,24 +8,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Free up disk and setup swap
-        run: |
-          sudo swapoff -a || true
-          sudo fallocate -l 6G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=6144
-          sudo chmod 600 /swapfile
-          sudo mkswap /swapfile
-          sudo swapon /swapfile
-          free -h
-          df -h
-
       - name: Install dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y \
-            bc bison build-essential ccache curl flex g++-aarch64-linux-gnu \
-            gcc-aarch64-linux-gnu git libelf-dev libffi-dev libgmp-dev \
-            libmpc-dev libmpfr-dev libssl-dev libxml2-dev make python3 \
-            unzip zip zstd
+            bc bison build-essential ccache clang curl flex lld llvm \
+            gcc-aarch64-linux-gnu binutils-aarch64-linux-gnu \
+            git libelf-dev libffi-dev libgmp-dev libmpc-dev libmpfr-dev \
+            libssl-dev libxml2-dev make python3 unzip zip zstd
 
       - name: Checkout kernel source
         uses: actions/checkout@v4
@@ -37,11 +27,15 @@ jobs:
         run: |
           git clone --depth=1 https://github.com/osm0sis/AnyKernel3.git AnyKernel3
 
-      - name: Build kernel
+      - name: Build kernel with Clang
         env:
           ARCH: arm64
           SUBARCH: arm64
+          CC: clang
+          CLANG_TRIPLE: aarch64-linux-gnu-
           CROSS_COMPILE: aarch64-linux-gnu-
+          LLVM: 1
+          LLVM_IAS: 1
           KBUILD_BUILD_USER: builder
           KBUILD_BUILD_HOST: github-actions
         run: |
@@ -49,12 +43,12 @@ jobs:
           DEFCONFIG="vendor/citrus-perf_defconfig"
           echo "Menggunakan defconfig: $DEFCONFIG"
 
-          make O=out ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE "$DEFCONFIG"
+          make O=out ARCH=$ARCH CC=$CC CLANG_TRIPLE=$CLANG_TRIPLE CROSS_COMPILE=$CROSS_COMPILE LLVM=$LLVM "$DEFCONFIG"
 
           ./scripts/config --file out/.config -d DEBUG_FS -d SCHED_DEBUG || true
-          make O=out ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
+          make O=out ARCH=$ARCH CC=$CC CLANG_TRIPLE=$CLANG_TRIPLE CROSS_COMPILE=$CROSS_COMPILE LLVM=$LLVM olddefconfig
 
-          make -j2 O=out ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE LOCALVERSION="-snuzzle-citrus"
+          make -j4 O=out ARCH=$ARCH CC=$CC CLANG_TRIPLE=$CLANG_TRIPLE CROSS_COMPILE=$CROSS_COMPILE LLVM=$LLVM LOCALVERSION="-snuzzle-citrus"
 
       - name: Package AnyKernel3 zip
         run: |
