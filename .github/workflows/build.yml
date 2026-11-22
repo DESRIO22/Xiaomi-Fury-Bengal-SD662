@@ -8,6 +8,16 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      - name: Free up disk and setup swap
+        run: |
+          sudo swapoff -a || true
+          sudo fallocate -l 6G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=6144
+          sudo chmod 600 /swapfile
+          sudo mkswap /swapfile
+          sudo swapon /swapfile
+          free -h
+          df -h
+
       - name: Install dependencies
         run: |
           sudo apt-get update
@@ -32,10 +42,10 @@ jobs:
           ARCH: arm64
           SUBARCH: arm64
           CROSS_COMPILE: aarch64-linux-gnu-
+          KBUILD_BUILD_USER: builder
+          KBUILD_BUILD_HOST: github-actions
         run: |
-          export KBUILD_BUILD_USER=builder
-          export KBUILD_BUILD_HOST=github-actions
-
+          set -e
           DEFCONFIG="vendor/citrus-perf_defconfig"
           echo "Menggunakan defconfig: $DEFCONFIG"
 
@@ -44,10 +54,11 @@ jobs:
           ./scripts/config --file out/.config -d DEBUG_FS -d SCHED_DEBUG || true
           make O=out ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE olddefconfig
 
-          make -j4 O=out ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE LOCALVERSION="-snuzzle-citrus"
+          make -j2 O=out ARCH=$ARCH CROSS_COMPILE=$CROSS_COMPILE LOCALVERSION="-snuzzle-citrus"
 
       - name: Package AnyKernel3 zip
         run: |
+          set -e
           IMAGE=$(find out/arch/arm64/boot -name "Image.gz-dtb" -o -name "Image.gz" -o -name "Image" | head -n 1)
           if [ -z "$IMAGE" ]; then
             echo "Kernel Image tidak ditemukan!"
